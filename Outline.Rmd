@@ -1,0 +1,267 @@
+---
+title: "Untitled"
+author: "Hiro Schmidt"
+date: "11/29/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+
+```{r}
+
+## binary object is a list of p character strings. Each character string is comprised of c 1's and 0's.
+
+## filters dataset, x, by '1' columns of binary string, str. Also returns list of removed columns
+col_filter = function(x,str,reg_fun) {
+  vars = colnames(x)
+  indep = str_extract(format(reg_fun),"[:alnum:]+(?=[:space:]*~)") %>% na.omit()
+  x_indep = x %>% dplyr::select(indep)
+  dep = vars[vars != indep]
+  x_dep = x %>% dplyr::select(dep)
+  str_list = as.logical(as.numeric(unlist(strsplit(str,""))))
+  str_list_neg = !str_list
+  dropped_cols = dep[str_list_neg]
+  new_x = as.data.frame(x_dep[,str_list])
+  new_x = cbind(x_indep,new_x)
+  colnames(new_x) = c(indep,dep[str_list])
+  return(list(new_x,dropped_cols))
+}
+
+## fitness of a set of data using  fitness function, regression type, regression formula, and a list of dropped cols. Also requires list of vars to ignore
+fitness = function(x, fun, reg, reg_fun, family, dropped_cols) {
+  if (length(dropped_cols>0)) {
+    reg_fun_new = lapply(dropped_cols,function(i){paste("-",i)}) %>% unlist() %>% paste(collapse=" ")
+    reg_fun_new = paste("~  . ",reg_fun_new,collapse = "") %>% as.formula()
+    reg_fun = update(reg_fun,reg_fun_new)
+  }
+
+  return(fun(reg(formula = reg_fun, family = family, data = x)))
+}
+
+## selection takes in  data, fitness function, regression type, regression formula, binary object, returns binary object
+gen_selection = function(x, fun, reg, reg_fun, family, bin){
+  P = length(bin)
+  
+  ## assigning selection probabilities to rows
+  fit = lapply(bin,function(i){x_filtered = col_filter(x,i,reg_fun)
+                               data = as.data.frame(x_filtered[1])
+                               dropped_cols = unlist(x_filtered[2])
+                               fitness(data,fun, reg, reg_fun, family, dropped_cols)}) %>% unlist()
+  bin_fit = as.data.frame(cbind(unlist(bin),fit))
+  bin_fit$fit = as.numeric(bin_fit$fit)
+  bin_fit = bin_fit[order(bin_fit$fit,decreasing = TRUE),]
+  bin_fit = mutate(bin_fit,prob = 2*(1:P)/(P*(P+1)))
+  bin_fit = mutate(bin_fit,csum = cumsum(prob))
+  
+  ## diagnostic print statement
+  #print(tail(bin_fit,6))
+  
+  new_bin = data.frame(matrix(nrow=P,ncol=2))
+  colnames(new_bin) = c("bin","fit")
+
+  ## generate new binary object based on probabilities
+  for (i in 1:P) {
+    u = runif(1)
+    
+    a = 0
+    index = 0
+    if (u<bin_fit[1,4]) {
+      new_bin[P,1] = bin_fit[1,1]
+      new_bin[P,2] = bin_fit[1,2]
+      a = 1
+    }
+    
+    while(a==0) {
+      index = index + 1
+      if (u >= bin_fit[index-1,4] && u <= bin_fit[index,4]) {
+        new_bin[i,1] = bin_fit[index,1]
+        new_bin[i,2] = bin_fit[index,2]
+        a = 1
+      }
+    }
+  }
+  
+  ## re-sort by fit
+  new_bin = new_bin[order(new_bin$fit,decreasing = TRUE),]
+  #print(new_bin)
+
+  return(new_bin[,1])
+}
+
+## crossover takes in binary object, returns binary object
+## CURRENTLY REQUIRES P = EVEN
+gen_crossover = function(bin) {
+  p = length(bin)
+  
+  ## swap takes in two binary strings and returns their offspring, combined into a list
+  swap = function(x,y) {
+    c = nchar(x)
+    
+    ## index of random split point
+    spl = sample(1:c,1)
+    x1 = substr(x,0,spl)
+    x2 = substr(x,spl+1,c)
+    y1 = substr(y,0,spl)
+    y2 = substr(y,spl+1,c)
+    x = paste0(x1,y2)
+    y = paste0(y1,x2)
+    return(c(x,y))
+  }
+  
+  new_bin = c()
+  
+  ## perform swap on adjacent rows of binary object
+  for (i in seq(1,p,2)) {
+    new_bin = c(new_bin,
+                swap(bin[i], bin[i+1]))
+  }
+  return(new_bin)
+}
+
+## mutation takes in binary object, returns binary object
+gen_mutate = function(bin) {
+  p = length(bin)
+  
+  ## mutate a single binary string, currently at rate 1/C
+  mutate_one = function(x) {
+    c = nchar(x)
+    
+    ## swap 1's for 0's and vice versa
+    toggle = function(a) {
+      if (a=="1") {
+        return("0")
+      } else {
+        return("1")
+      }
+    }
+    
+    for (i in 1:c) {
+      if (runif(1,min=0,max=1)<(1/c)) {
+        x = paste0(substr(x,1,i-1),
+              toggle(substr(x,i,i)),
+              substr(x,i+1,c))
+      }
+    }
+    return(x)
+  }
+  
+  new_bin = lapply(bin,mutate_one)
+  
+  return(unlist(new_bin))
+}
+
+
+## takes in data, fitness function, regression type, regression formula, binary object, returns binary object
+generation = function(x, fun, reg, reg_fun, family, bin, sel, cross, mut, last=FALSE){
+  select_bin = sel(x, fun, reg, reg_fun, family, bin)
+  if (!last) {
+    crossover_bin = cross(select_bin)
+    mutate_bin = mut(crossover_bin)
+    return(mutate_bin)
+  } else {
+    return(select_bin)
+  }
+  
+  return(mutate_bin)
+}
+
+## main takes in data, regression type, regression formula, fitness function, returns principal components, auxiliary information
+select = function(x, reg, reg_fun, family = "gaussian", fun = AIC, ngen=40, sel = gen_selection, cross = gen_crossover, mut = gen_mutate){
+  
+  ## check inputs
+  if(!is.data.frame(x)) {
+    stop("Error: Your data must be in the form of a dataframe.")
+  }
+  if(!typeof(reg)=="closure") {
+    stop("Error: The regression function needs to be a closure.")
+  }
+  if(!class(reg_fun)=="formula") {
+    stop("Error: The reg_fun input is not a valid formula.")
+  }
+  if(!typeof(fun)=="closure") {
+    stop("Error: The fitness function needs to be a closure.")
+  }
+  if(!ngen%%1==0) {
+    stop("Error: The generation number has to be a whole value.")
+  }
+  if(!typeof(sel)=="closure") {
+    stop("Error: The selection function needs to be a closure.")
+  }
+  if(!typeof(cross)=="closure") {
+    stop("Error: The crossover function needs to be a closure.")
+  }
+  if(!typeof(mut)=="closure") {
+    stop("Error: The mutation function needs to be a closure.")
+  }
+  
+  ## max number of generations
+  N = ngen
+  
+  ## population, i.e. number of binary strings
+  P = 8*N+6
+  
+  ## number of dependent variables
+  C = ncol(x) - 1
+  
+  ## number of consecutive same results before stopping algorithm
+  n = 3
+  
+  ## generate starting binary object
+  rand_bin = function(p,c) {
+    bin = c()
+    for (i in 1:p) {
+      str = paste0(sample(0:1,c,replace = TRUE),collapse = "")
+      bin = c(bin,str)
+    }
+    return(bin)
+  }
+  
+  bin  = rand_bin(P,C)
+  
+  
+  ## run generations
+  done = FALSE
+  same = 0
+  count = 0
+  bin_final_prev = "2"
+  
+  
+  while(!done && N>count) {
+    count = count + 1
+    print(paste("Gen",count))
+    
+    ## skip crossover and mutation on last round to maximize convergence odds
+    if (N>count) {
+      bin = generation(x, fun, reg, reg_fun, family, bin,sel,cross,mut)
+    } else {
+      bin = generation(x, fun, reg, reg_fun, family, bin,sel,cross,mut,TRUE)
+    }
+    
+    ## remove 1 pairing each generation
+    bin = head(bin,-4)
+    bin_final_new = tail(bin,1)
+
+    ## stop if n straight of the same combination
+    if (bin_final_new == bin_final_prev) {
+      same = same + 1
+      if (same >= n) {
+        done = TRUE
+      }
+    } else {
+      same = 0
+    }
+    bin_final_prev = bin_final_new
+    
+  }
+  
+  return(c(bin_final_new,col_filter(x,bin_final_new,reg_fun)[1]))
+}
+
+result <- select(df, glm, Y ~ X1 + X2 + X3 + X4 + X5 + X6)
+```
+
+

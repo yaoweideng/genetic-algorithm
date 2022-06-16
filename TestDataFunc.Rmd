@@ -1,0 +1,87 @@
+---
+title: "TestData"
+author: "Duncan Black"
+date: "12/8/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+## Returns test data with correct relevant variables and a bin object
+testdata = function(nvar,rper,npoints,noisevar,linkfunc,dist,minx,maxx){ 
+
+  # True Response/Related Predictors
+  beta = sample(1:5,nvar*rper,replace=TRUE)
+  beta0 = sample(1:5,1,replace=TRUE)
+  X_selected = matrix(runif(npoints*(nvar*rper),min=minx,max=maxx),ncol=(nvar*rper))
+  
+  # Linear Response
+  Y_nonoise = X_selected%*%beta + beta0
+  
+  # Unrelated Predictors
+  if(rper != 1) {
+    ncol = ceiling(nvar*(1-rper))
+    X = cbind(X_selected,matrix(runif(npoints*ncol,min=minx,max=maxx),ncol=ncol))
+  }
+  else {
+    X = X_selected
+  }
+  
+  ##Types of Regressions
+  Y = Y_nonoise + rnorm(length(Y_nonoise),0,noisevar)
+  Y = linkfunc(Y)
+  
+  if(dist == 'Poisson') {
+    #Note no error term due to poisson variance
+    print("With poisson regression noisevar will be ignored")
+   for(i in 1:length(Y)) {
+      Y[i] = rpois(1,Y_nonoise[i])
+    }
+  }
+  else if(dist == 'Bernoulli') {
+    for(i in 1:length(Y)) {
+      Y[i] = rbinom(1,1,Y[i])
+    }
+  }
+  else if(dist == 'Gaussian') {
+    Y = Y
+  }
+  else {
+    stop("Error: Invalid distribution")
+  }
+    
+  #Collect into Dataframe
+  Y = as.data.frame(Y)
+  X = as.data.frame(X)
+  
+  #Scramble relavent variable placements
+  indexscramble = sample(1:nvar,nvar,replace=FALSE)
+  X = X[indexscramble]
+  bin = c(as.character(rep(1,nvar*rper)),as.character(rep(0,(nvar-nvar*rper))))
+  bin = bin[indexscramble]
+  colnames(X) = paste0("X",as.character(c(1:nvar)))
+  colnames(Y) = c("Y")
+  
+  #Return "true" variables and data
+  bin = paste(bin, collapse = '')
+  data = cbind(X,Y)
+  beta = c(beta[indexscramble])
+
+  return(list('data'=data,'bin'=bin,'beta'= beta,'beta0' = beta0))
+}
+
+logit <- function(z) {
+  return(1/(1+exp(-z)))
+}
+
+out = testdata(nvar = 6, rper = 1, npoints = 100, noisevar = 1, linkfunc = identity, 
+               dist = 'Gaussian', -10, 10)
+df = out[[1]]
+true_bin = out[[2]]
+
+print(out)
+```
+

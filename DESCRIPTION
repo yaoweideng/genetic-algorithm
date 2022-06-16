@@ -1,0 +1,16 @@
+Package: GA
+Type: Package
+Title: Implementation of Genetic Algorithm
+Version: 0.1.0
+Author: Stat243: Hiro Schmidt, Duncan Black, Wei Deng
+Maintainer: <yaowei@berkeley.edu>
+Description: Implementation of the genetic algorithm. A variable selection method is included. This includes helper functions for selection, mutation, and crossover that aren't accessible by the user, but they may specify their own methods if they wish. 
+License: NA
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.1.2
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Imports:
+  dplyr, stringr
